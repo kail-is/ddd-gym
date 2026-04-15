@@ -23,9 +23,9 @@
 - **핵심 용어**: 숙소(Accommodation), 숙소 일정(AccommodationSchedule), 선점 정책(PreemptionPolicy)
 - **외부 의존**: 없음 (모든 도메인이 숙소 컨텍스트를 통해 일정 충돌 확인)
 
-### 결제 컨텍스트 (Payment Context)
-- **책임**: 결제 금액 계산, 결제 요청/완료/실패 처리, 결제 완료 시 Kafka 이벤트 발행
-- **핵심 용어**: 결제(Payment), 결제 상태(PaymentStatus), 결제 금액(PaymentAmount)
+### 결제 컨텍스트 (Transaction Context)
+- **책임**: 결제 금액 계산, 결제 요청/완료/실패 처리, 결제 완료 시 Kafka 이벤트 발행, 부분/전체 취소 및 환불 원장 관리
+- **핵심 용어**: 거래(Transaction), 거래 상태(TransactionStatus), 거래 상세(TransactionDetail)
 - **외부 의존**: 결제 완료/실패 시 숙소 컨텍스트에 선점 해제 또는 확정 요청
 
 ```
@@ -50,10 +50,22 @@
 - **책임**: 숙소 정보 관리, 예약 완료된 일정 메타정보 관리, Redis 키 생명주기 관리
 - **불변조건**: 동일 숙소·동일 일정 더블 부킹 불가
 
-### Payment (결제 컨텍스트)
-- **Aggregate Root**: Payment
-- **포함 객체**: PaymentAmount, PaymentStatus, BookingReference
-- **책임**: 결제 처리, 완료/실패 이벤트 발행
+### Transaction (결제 컨텍스트)
+- **Aggregate Root**: Transaction
+- **포함 객체**: TransactionDetail (Entity, 1..N), TransactionStatus, BookingReference
+- **책임**: 결제 처리, 완료/실패 이벤트 발행, 부분/전체 취소 원장 누적 관리, 전액 환불 시 상태 전이
+
+#### TransactionDetail (Entity — Transaction 하위)
+- **포함 정보**: 결제 상태(DetailPaymentStatus), 환불 상태(RefundStatus), 환불 금액(RefundAmount), 결제 원장 정보(LedgerInfo)
+- **생성 시점**: 결제 완료 시 최초 1건 생성, 부분 취소 요청마다 환불 row 추가
+- **불변조건**: TransactionDetail row는 수정 불가, 취소 이력은 append-only
+
+#### Transaction 상태 흐름
+```
+결제완료(Paid) → 부분취소(PartialCancelled) → 전체취소(FullyCancelled)
+```
+- `PartialCancelled`: 부분 취소 발생 시, TransactionDetail에 환불 row 추가
+- `FullyCancelled`: 잔여 결제 금액이 0이 되는 시점에 Transaction 상태 전이
 
 ---
 
@@ -63,9 +75,11 @@
 |--------|-----------|-----------|-----------|
 | `SchedulePreempted` (일정 선점됨) | 예약하기 클릭 시 | 숙소 컨텍스트 | - |
 | `BookingInitiated` (예약 시작됨) | 예약 데이터 입력 시작 | 예약 컨텍스트 | - |
-| `PaymentCompleted` (결제 완료됨) | 결제 성공 시 | 결제 컨텍스트 | 숙소 컨텍스트 |
-| `PaymentFailed` (결제 실패됨) | 결제 실패 시 | 결제 컨텍스트 | 숙소 컨텍스트 |
+| `TransactionCompleted` (결제 완료됨) | 결제 성공 시 | 결제 컨텍스트 | 숙소 컨텍스트 |
+| `TransactionFailed` (결제 실패됨) | 결제 실패 시 | 결제 컨텍스트 | 숙소 컨텍스트 |
 | `BookingConfirmed` (예약 확정됨) | 결제 완료 후 일정 확정 시 | 숙소 컨텍스트 | 예약 컨텍스트 |
+| `PartialRefundProcessed` (부분 환불 처리됨) | 부분 취소 요청 처리 시 | 결제 컨텍스트 | 예약 컨텍스트 |
+| `TransactionFullyRefunded` (전액 환불 완료됨) | 잔여 결제금액이 0이 되는 시점 | 결제 컨텍스트 | 예약 컨텍스트, 숙소 컨텍스트 |
 | `SchedulePreemptionExpired` (선점 만료됨) | TTL 만료 시 | 숙소 컨텍스트 | - |
 | `BookingCancelled` (예약 취소됨) | 취소 요청 처리 시 | 예약 컨텍스트 | 숙소 컨텍스트, 결제 컨텍스트 |
 | `CheckInRecorded` (체크인 완료됨) | 체크인 처리 시 | 예약 컨텍스트 | - |
@@ -81,7 +95,8 @@
 | `Booking` | 예약 | 예약 원장, 상태 전이 관리 |
 | `Accommodation` | 숙소 | 숙소 정보, 일정/선점 정책 관리 |
 | `AccommodationSchedule` | 숙소 | 확정된 예약 일정 메타정보 |
-| `Payment` | 결제 | 결제 처리 및 상태 관리 |
+| `Transaction` | 결제 | 결제/환불 원장 관리, 상태 전이 (Paid → PartialCancelled → FullyCancelled) |
+| `TransactionDetail` | 결제 | 결제·환불 row 이력, 원장 정보 (Transaction 하위 Entity) |
 
 ### Value Object (VO)
 | 이름 | 컨텍스트 | 설명 |
@@ -90,7 +105,8 @@
 | `GuestInfo` | 예약 | 예약자 이름, 연락처, 인원 수 |
 | `ScheduleKey` | 숙소 | Redis 키 복합값 (숙소ID + DateRange) |
 | `PreemptionPolicy` | 숙소 | 선점 TTL, 숙소/이벤트별 정책 |
-| `PaymentAmount` | 결제 | 결제 금액, 통화, 할인 정보 |
+| `RefundAmount` | 결제 | 환불 금액, 통화, 환불 사유 (TransactionDetail 내 VO) |
+| `LedgerInfo` | 결제 | 결제 원장 정보, PG사 거래 ID, 승인 번호 (TransactionDetail 내 VO) |
 
 ---
 
@@ -123,7 +139,7 @@
 
 ### 확정 트랜잭션 (비동기 - Kafka)
 ```
-결제 컨텍스트: PaymentCompleted 이벤트 발행
+결제 컨텍스트: TransactionCompleted 이벤트 발행
   → Kafka
   → 숙소 컨텍스트: 일정 "예약완료" 상태 생성
                     Redis 키 삭제
@@ -133,9 +149,27 @@
 
 ### 실패 트랜잭션 (동기)
 ```
-결제 컨텍스트: 결제 실패 감지
+결제 컨텍스트: 결제 실패 감지 → TransactionFailed 발행
   → 숙소 컨텍스트: Redis 키 삭제 요청
   → 선점 해제 완료
+```
+
+### 부분 취소 트랜잭션 (동기)
+```
+고객: 부분 취소 요청 (특정 박 수 선택)
+  → 결제 컨텍스트: TransactionDetail에 환불 row 추가
+                    Transaction 상태 → PartialCancelled
+  → PartialRefundProcessed 발행
+  → 예약 컨텍스트: 예약 DateRange 조정
+```
+
+### 전액 취소 트랜잭션 (동기)
+```
+잔여 결제 금액 = 0 확인
+  → 결제 컨텍스트: Transaction 상태 → FullyCancelled
+  → TransactionFullyRefunded 발행
+  → 숙소 컨텍스트: 일정 선택가능 상태 복원
+  → 예약 컨텍스트: 예약 상태 → 취소됨
 ```
 
 ---
