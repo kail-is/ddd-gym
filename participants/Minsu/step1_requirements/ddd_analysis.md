@@ -20,6 +20,7 @@
    - Reservation (루트: Reservation, 예약 금액 스냅샷 포함)
    - PricingPolicy (루트: Room, 호스트가 숙소에 설정하는 가격 정책)
 3. **Domain Event 후보**
+   - ReservationRequested - 예약 요청됨
    - ReservationConfirmed - 예약 확정
    - CustomerReservationCancelled - 사용자 예약 취소
    - HostReservationCancelled - 호스트 예약 취소
