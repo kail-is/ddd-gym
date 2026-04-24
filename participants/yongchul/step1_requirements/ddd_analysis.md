@@ -71,19 +71,20 @@
 
 ## 3. Domain Event 후보
 
-| 이벤트 | 발생 시점 | 발행 주체 | 수신 주체 |
-|--------|-----------|-----------|-----------|
-| `SchedulePreempted` (일정 선점됨) | 예약하기 클릭 시 | 숙소 컨텍스트 | - |
-| `BookingInitiated` (예약 시작됨) | 예약 데이터 입력 시작 | 예약 컨텍스트 | - |
-| `TransactionCompleted` (결제 완료됨) | 결제 성공 시 | 결제 컨텍스트 | 숙소 컨텍스트 |
-| `TransactionFailed` (결제 실패됨) | 결제 실패 시 | 결제 컨텍스트 | 숙소 컨텍스트 |
-| `BookingConfirmed` (예약 확정됨) | 결제 완료 후 일정 확정 시 | 숙소 컨텍스트 | 예약 컨텍스트 |
-| `PartialRefundProcessed` (부분 환불 처리됨) | 부분 취소 요청 처리 시 | 결제 컨텍스트 | 예약 컨텍스트 |
-| `TransactionFullyRefunded` (전액 환불 완료됨) | 잔여 결제금액이 0이 되는 시점 | 결제 컨텍스트 | 예약 컨텍스트, 숙소 컨텍스트 |
-| `SchedulePreemptionExpired` (선점 만료됨) | TTL 만료 시 | 숙소 컨텍스트 | - |
-| `BookingCancelled` (예약 취소됨) | 취소 요청 처리 시 | 예약 컨텍스트 | 숙소 컨텍스트, 결제 컨텍스트 |
-| `CheckInRecorded` (체크인 완료됨) | 체크인 처리 시 | 예약 컨텍스트 | - |
-| `CheckOutRecorded` (체크아웃 완료됨) | 체크아웃 처리 시 | 예약 컨텍스트 | - |
+| 이벤트 | 발생 시점 | 발행 주체 | 수신 주체 | Kafka 파티션 키 |
+|--------|-----------|-----------|-----------|-----------------|
+| `SchedulePreempted` (일정 선점됨) | 예약하기 클릭 시 | 숙소 컨텍스트 | - | - |
+| `BookingInitiated` (예약 시작됨) | 예약 데이터 입력 시작 | 예약 컨텍스트 | - | - |
+| `TransactionCompleted` (결제 완료됨) | 결제 성공 시 | 결제 컨텍스트 | 숙소 컨텍스트 | **BookingID** |
+| `TransactionFailed` (결제 실패됨) | 결제 실패 시 | 결제 컨텍스트 | 예약 컨텍스트 | BookingID |
+| `BookingConfirmed` (예약 확정됨) | 결제 완료 후 일정 확정 시 | 숙소 컨텍스트 | 예약 컨텍스트 | BookingID |
+| `PartialRefundProcessed` (부분 환불 처리됨) | 부분 취소 요청 처리 시 | 결제 컨텍스트 | 예약 컨텍스트 | BookingID |
+| `TransactionFullyRefunded` (전액 환불 완료됨) | 잔여 결제금액이 0이 되는 시점 | 결제 컨텍스트 | 예약 컨텍스트, 숙소 컨텍스트 | BookingID |
+| `SchedulePreemptionExpired` (선점 만료됨) | Redis TTL 만료 시 | 숙소 컨텍스트 | **예약 컨텍스트** | **BookingID** |
+| `TransactionCancelled` (결제 취소됨) | Booking EXPIRED 확인 후 | 결제 컨텍스트 | 예약 컨텍스트 | BookingID |
+| `BookingCancelled` (예약 취소됨) | 취소 요청 처리 시 | 예약 컨텍스트 | 숙소 컨텍스트, 결제 컨텍스트 | BookingID |
+| `CheckInRecorded` (체크인 완료됨) | 체크인 처리 시 | 예약 컨텍스트 | - | - |
+| `CheckOutRecorded` (체크아웃 완료됨) | 체크아웃 처리 시 | 예약 컨텍스트 | - | - |
 
 ---
 
@@ -92,7 +93,7 @@
 ### 엔티티 (Entity)
 | 이름 | 컨텍스트 | 책임 |
 |------|----------|------|
-| `Booking` | 예약 | 예약 원장, 상태 전이 관리 |
+| `Booking` | 예약 | 예약 원장, 상태 전이 관리 (REQUESTED → CONFIRMED/EXPIRED/CANCELLED → CHECKED_IN → CHECKED_OUT) |
 | `Accommodation` | 숙소 | 숙소 정보, 일정/선점 정책 관리 |
 | `AccommodationSchedule` | 숙소 | 확정된 예약 일정 메타정보 |
 | `Transaction` | 결제 | 결제/환불 원장 관리, 상태 전이 (Paid → PartialCancelled → FullyCancelled) |
@@ -103,7 +104,7 @@
 |------|----------|------|
 | `DateRange` | 예약, 숙소 | 체크인~체크아웃 날짜 범위 |
 | `GuestInfo` | 예약 | 예약자 이름, 연락처, 인원 수 |
-| `ScheduleKey` | 숙소 | Redis 키 복합값 (숙소ID + DateRange) |
+| `ScheduleKey` | 숙소 | Redis 키: `숙소ID + DateRange` / Redis Value: `BookingID` (TTL 만료 이벤트 발행 시 BookingID 추출용) |
 | `PreemptionPolicy` | 숙소 | 선점 TTL, 숙소/이벤트별 정책 |
 | `RefundAmount` | 결제 | 환불 금액, 통화, 환불 사유 (TransactionDetail 내 VO) |
 | `LedgerInfo` | 결제 | 결제 원장 정보, PG사 거래 ID, 승인 번호 (TransactionDetail 내 VO) |
@@ -120,8 +121,9 @@
 
 ### 정책 (Policy) - 이벤트/워크플로우에서 처리
 - 선점 TTL 기본값: 1시간 (숙소별, 이벤트 기간별 조절 가능)
-- 결제 실패 시 숙소 도메인에 명시적 선점 삭제 요청
-- TTL 만료 시 선점 자동 해제 (Redis 자동 만료)
+- 결제 실패 시 선점 키 유지 — TTL 만료 전까지 결제 재시도 가능
+- 결제 재시도 시 신규 Transaction 생성 (기존 실패 Transaction 재사용 불가)
+- TTL 만료 시 선점 자동 해제 (Redis 자동 만료) → Booking EXPIRED 전이
 - 체크인 전 취소 수수료 정책 (숙소/호스트별 상이)
 
 ---
@@ -147,11 +149,16 @@
   → 예약 컨텍스트: 예약 상태 "확정됨"으로 변경
 ```
 
-### 실패 트랜잭션 (동기)
+### 실패 트랜잭션 (재시도 가능)
 ```
 결제 컨텍스트: 결제 실패 감지 → TransactionFailed 발행
-  → 숙소 컨텍스트: Redis 키 삭제 요청
-  → 선점 해제 완료
+  → 예약 컨텍스트: Booking 상태 REQUESTED 유지 (재시도 가능 상태)
+  → 숙소 컨텍스트: 선점 키 유지 (TTL 만료 전까지 재시도 허용)
+
+재시도 시:
+  → 결제 컨텍스트: 신규 Transaction 생성 후 결제 재요청
+  → 성공 시: TransactionCompleted 흐름으로 이어짐
+  → TTL 만료 시: SchedulePreemptionExpired → Booking EXPIRED (최종)
 ```
 
 ### 부분 취소 트랜잭션 (동기)

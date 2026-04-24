@@ -13,7 +13,7 @@ START 챗봇과 대화를 끝낼 때마다 이 파일을 갱신해 다음 세션
 
 ## 전체 체크리스트
 - [x] Week1 기록 완료
-- [ ] Week2 기록 완료
+- [x] Week2 기록 완료
 - [ ] Week3 기록 완료
 
 ---
@@ -59,10 +59,44 @@ START 챗봇과 대화를 끝낼 때마다 이 파일을 갱신해 다음 세션
 
 ### Step 2 – Week2
 - **참가자**: yongchul
-- **진행 내용 요약**: 
-- **AI 대화 로그 링크/메모**: 
-- **PR/노션 링크**: 
-- **다음 액션**: 
+- **진행 날짜**: 2026-04-21
+- **진행 내용 요약**:
+  - TTL 만료 후 결제 완료 시나리오 심층 분석 (질문 루프 5회 이상)
+  - Booking 상태 머신에 `EXPIRED` 추가 (요청됨 → 만료됨: 최종 상태)
+  - Kafka 파티션 키 설계 결정: BookingID를 파티션 키로 사용하여 `SchedulePreemptionExpired`와 `TransactionCompleted` 순서 보장
+  - Redis Value에 BookingID 포함 설계 (TTL 만료 이벤트 발행 시 BookingID 추출용)
+  - `SchedulePreemptionExpired` 수신 주체 변경: 없음 → 예약 컨텍스트
+  - `TransactionCancelled` 이벤트 신규 도출 (Booking EXPIRED 확인 후 결제 컨텍스트 발행)
+  - Given/When/Then 시나리오 7개 작성 (정상 2, 예외 3, 경계 1, 위험 1)
+  - 테스트 케이스 10개 작성 (정상 3, 예외 3, 경계 2, 위험 2)
+  - 코틀린 코드 반영: BookingStatus.EXPIRED, BookingOrder.expire(), 도메인 이벤트 클래스 신규 생성
+
+- **핵심 설계 결정**:
+  1. Booking 상태 `EXPIRED` 도입: TTL 만료 후 결제 완료된 예약의 최종 상태
+  2. Kafka 파티션 키 = BookingID: 동일 예약 관련 이벤트의 순서 보장
+  3. Redis Value = BookingID: TTL 만료 시 숙소 컨텍스트가 어느 예약의 선점인지 식별
+  4. `DomainEvent` 인터페이스에 `kafkaPartitionKey` 명시: 이벤트 발행 계층에서 파티션 키 일관성 강제
+
+- **이월된 열린 질문**:
+  1. Redis 장애 시 Fallback 전략은 무엇인가? 예약 기능 전체 차단 vs DB Fallback
+  2. Kafka 이벤트 중복 수신 시 `BookingConfirmed` 멱등성을 어떻게 보장하는가?
+  3. 호스트가 이미 선점 중인 일정을 강제 차단할 경우 선점 고객 보상 처리 방법은?
+  4. 외부 OTA 채널의 예약이 숙소 도메인을 거치지 않고 직접 인입되는 경우의 처리 방식은?
+
+- **산출물**:
+  - `step2_validation/scenario.md` 완성 (7개 시나리오)
+  - `step2_validation/test.md` 완성 (10개 테스트 케이스)
+  - `step1_requirements/ddd_analysis.md` 업데이트 (도메인 이벤트 Kafka 파티션 키, Booking 상태 흐름, ScheduleKey Value 설계 반영)
+  - 코틀린 코드: `BookingStatus`, `BookingOrder`, 도메인 이벤트 클래스 3종, 테스트 3건 추가
+
+- **AI 대화 로그 링크/메모**: Claude Code (claude-sonnet-4-6) 세션, 2026-04-21
+
+- **PR/노션 링크**: -
+
+- **다음 액션**:
+  - Week3: 질문 루프 5개 통합 (`step3_integration/question_log.md`)
+  - Week3: 핵심 결정 2개 도출 (`step3_integration/summary_outline.md`)
+  - Week3: 파괴적 요구사항 제안
 
 ---
 
